@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Payroll &amp; Attendance</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f6f5f0;--card:#fff;--ink:#1d2a24;--mute:#68766e;--line:#dcd9cc;--acc:#1f5c46;--on:#fff;--P:#d9efe2;--A:#f6d9d4;--H:#fbebc6;--L:#d6e6f7;--O:#e6e4dc}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15201b;--card:#1e2b25;--ink:#e8efe9;--mute:#9db0a5;--line:#34453d;--acc:#5fb98f;--on:#10201a;--P:#24523a;--A:#5a2b26;--H:#5a4a1d;--L:#25405c;--O:#33403a}}
+:root[data-theme="dark"]{--bg:#15201b;--card:#1e2b25;--ink:#e8efe9;--mute:#9db0a5;--line:#34453d;--acc:#5fb98f;--on:#10201a;--P:#24523a;--A:#5a2b26;--H:#5a4a1d;--L:#25405c;--O:#33403a}
+*,::before,::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:var(--acc);color:var(--on)}
+header input{flex:1;min-width:120px;background:transparent;border:0;border-bottom:1px dashed currentColor;color:inherit;font-weight:600;font-size:16px;border-radius:0}
+button{font:inherit;font-weight:600;padding:7px 14px;border-radius:6px;border:1px solid var(--acc);background:var(--acc);color:var(--on);cursor:pointer}
+button.ghost{background:transparent;color:inherit;border-color:currentColor}
+nav{display:flex;gap:4px;padding:8px 14px 0;overflow-x:auto;border-bottom:1px solid var(--line)}
+nav button{background:transparent;color:var(--mute);border:0;border-bottom:3px solid transparent;border-radius:0}
+nav button.on{color:var(--ink);border-bottom-color:var(--acc)}
+section{padding:10px 14px}
+input,select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:5px;background:var(--card);color:var(--ink);min-width:0}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+table{border-collapse:collapse;background:var(--card);width:100%}
+th,td{border:1px solid var(--line);padding:5px 7px;text-align:left}
+th{font-size:12px;color:var(--mute)}
+td input{width:100%}
+.scroll{overflow-x:auto;max-width:100%}
+.grid th,.grid td{padding:3px 4px;text-align:center}
+.grid th small{display:block;font-weight:400}
+.sticky{position:sticky;left:0;background:var(--card);text-align:left!important;min-width:130px;z-index:1}
+.sticky small{display:block;color:var(--mute)}
+.c{cursor:pointer;font-weight:700;min-width:28px}
+.c.P{background:var(--P)}.c.A{background:var(--A)}.c.H{background:var(--H)}.c.L{background:var(--L)}.c.O{background:var(--O)}
+.wk{background:var(--O)}
+.n{text-align:right!important}
+.box{max-width:340px;margin:8vh auto;padding:20px;background:var(--card);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;gap:8px}
+.box h1{margin:0;font-size:20px}
+.mute{color:var(--mute)}.err{color:#c0392b;min-height:1em;margin:0}.pad{padding:8px 0}
+.mo{display:inline-flex;gap:6px;align-items:center;margin-right:10px}
+tfoot td{font-weight:700}
+#toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:6px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;z-index:9}
+#toast.show{opacity:1}
+</style></head>
+<body>
+<div id="app"></div><div id="toast"></div>
+<script>
+const G=i=>document.getElementById(i);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const ST=['','P','A','H','L','O'];
+function today(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function curM(){return today().slice(0,7)}
+let DB,DL,U,me=null,admin=false,tab='att',month=curM(),emps=[],att={},sal={},adj={},users=[],company='My Company',subs={},tday=today(),shift={start:'09:00',end:'17:00'};
+
+function toast(m){const t=G('toast');t.textContent=m;t.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove('show'),3000)}
+const guard=async f=>{try{await f()}catch(e){toast(e&&e.code==='invalid_argument'?"Not allowed — your Claude account can't change this (ask the owner for Editor/Contributor access).":(e&&(e.message||e.code))||'Failed')}};
+const onErr=e=>toast('Could not read data: '+((e&&e.code)||'error'));
+const un=k=>{if(subs[k])subs[k]();subs[k]=null};
+async function upsert(ref,body){const s=await ref.get();return s.exists?ref.update(body):ref.set(body)}
+
+async function pbk(pw,salt){
+  const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveBits']);
+  const b=await crypto.subtle.deriveBits({name:'PBKDF2',salt:new TextEncoder().encode(salt),iterations:120000,hash:'SHA-256'},k,256);
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+const rnd=()=>[...crypto.getRandomValues(new Uint8Array(12))].map(x=>x.toString(16).padStart(2,'0')).join('');
+async function mkUser(id,name,role,pw){
+  id=id.trim().toLowerCase();
+  if(!/^[a-z0-9_.-]{3,30}$/.test(id))throw Error('User ID: 3-30 characters, letters/numbers . _ -');
+  if(pw.length<6)throw Error('Password must be at least 6 characters');
+  const salt=rnd();
+  await DB.doc('users/'+id).set({name:name.trim()||id,role,salt,hash:await pbk(pw,salt)});
+}
+
+/* ---------- login ---------- */
+function drawLogin(){
+  G('app').innerHTML=`<div class="box"><h1>Payroll &amp; Attendance</h1><p class="mute">Sign in with your User ID</p>
+  <input id="lid" placeholder="User ID" autocomplete="username" autocapitalize="off">
+  <input id="lpw" type="password" placeholder="Password" autocomplete="current-password">
+  <button onclick="doLogin()">Sign in</button><p id="lerr" class="err"></p><div id="boot"></div></div>`;
+  G('lpw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
+  checkBoot();
+}
+async function doLogin(){
+  const id=G('lid').value.trim().toLowerCase(),pw=G('lpw').value,err=G('lerr');
+  err.textContent='';
+  if(!/^[a-z0-9_.-]{3,30}$/.test(id)||!pw){err.textContent='Enter your User ID and password.';return}
+  try{
+    const s=await DB.doc('users/'+id).get(),u=s.exists&&s.data();
+    if(!u||(await pbk(pw,u.salt))!==u.hash){await sleep(1200);err.textContent='Wrong User ID or password.';return}
+    me={id,name:u.name,role:u.role};
+    try{sessionStorage.setItem('pa_uid',id)}catch(e){}
+    start();
+  }catch(e){err.textContent='Could not sign in: '+((e&&e.code)||'error')}
+}
+async function checkBoot(){
+  try{const s=await DB.collection('users').limit(1).get();if(!s.empty)return}catch(e){return}
+  let ok=false;try{ok=U&&((await U.isOwner())||(await U.can('data.write'))===true)}catch(e){}
+  G('boot').innerHTML=ok?`<hr><b>First-time setup</b><p class="mute">Create the first admin account.</p>
+  <input id="bi" placeholder="User ID"><input id="bn" placeholder="Full name"><input id="bp" type="password" placeholder="Password (6+ characters)">
+  <button onclick="bootAdmin()">Create admin</button>`
+  :'<p class="mute">No accounts are visible to you. If you were given a User ID, ask the owner to share this page with you (Contributor or Editor) so you can read it.</p>';
+}
+function bootAdmin(){guard(async()=>{await mkUser(G('bi').value,G('bn').value,'admin',G('bp').value);toast('Admin created — sign in now');G('lid').value=G('bi').value;G('lpw').focus()})}
+function logout(){try{sessionStorage.removeItem('pa_uid')}catch(e){}Object.keys(subs).forEach(un);me=null;admin=false;emps=[];att={};sal={};adj={};users=[];drawLogin()}
+
+/* ---------- app shell ---------- */
+function start(){admin=me.role==='admin';tab='att';month=curM();tday=today();drawShell();subBase()}
+function drawShell(){
+  const tabs=admin?[['att','Attendance'],['emp','Employees'],['pay','Payroll'],['usr','Users']]:[['att','Attendance']];
+  G('app').innerHTML=`<header><input id="co" value="${esc(company)}" ${admin?'':'readonly'} onchange="saveCo(this.value)">
+  <span>${esc(me.name)} · ${admin?'Admin':'Attendance only'}</span><button class="ghost" onclick="logout()">Sign out</button></header>
+  <nav>${tabs.map(([k,l])=>`<button id="t_${k}" class="${k===tab?'on':''}" onclick="go('${k}')">${l}</button>`).join('')}</nav>
+  <section id="frm"></section><section id="tbl"></section>`;
+  drawTab();
+}
+function saveCo(v){guard(()=>DB.doc('settings/company').set({name:v.trim()||'My Company'}))}
+function go(k){tab=k;document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.id==='t_'+k));drawTab()}
+function setMonth(v){if(!v)return;month=v;att={};adj={};if(tday.slice(0,7)!==month)tday=month===curM()?today():month+'-01';const t=G('td');if(t)t.value=tday;subMonth();renderTbl()}
+function drawTab(){
+  const mo=`<label class="mo">Month <input type="month" id="mo" value="${month}" onchange="setMonth(this.value)"></label>`;
+  const f={
+    att:mo+`<label class="mo">Day <input type="date" id="td" value="${tday}" onchange="setTDay(this.value)"></label>`+(admin?`<label class="mo">Shift <input type="time" id="s1" value="${shift.start}" onchange="saveShift()" style="width:auto"> to <input type="time" id="s2" value="${shift.end}" onchange="saveShift()" style="width:auto"></label>`:'')+(month===curM()?'<button onclick="allP()">Mark everyone present today</button>':''),
+    pay:mo+'<button onclick="csv()">Download CSV</button>',
+    emp:`<div class="row"><input id="ec" placeholder="Code" size="6"><input id="en" placeholder="Name"><input id="ed" placeholder="Designation"><input id="es" type="number" placeholder="Monthly salary"><button onclick="addEmp()">Add employee</button></div>`,
+    usr:`<div class="row"><input id="ui" placeholder="User ID"><input id="un" placeholder="Full name"><select id="ur"><option value="clerk">Attendance only</option><option value="admin">Admin (full access)</option></select><input id="up" type="password" placeholder="Password (6+)"><button onclick="addUser()">Add user</button></div>`
+  };
+  G('frm').innerHTML=f[tab]||'';
+  renderTbl();
+}
+function renderTbl(){
+  const t=G('tbl');if(!t||!me)return;
+  t.innerHTML={att:attHTML,emp:empHTML,pay:payHTML,usr:usrHTML}[tab]();
+}
+
+/* ---------- live data ---------- */
+function subBase(){
+  un('emp');subs.emp=DB.collection('employees').onSnapshot(s=>{
+    emps=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.code||'').localeCompare(String(b.code||''),undefined,{numeric:true})||String(a.name).localeCompare(String(b.name)));
+    renderTbl()},onErr);
+  un('co');subs.co=DB.doc('settings/company').onSnapshot(s=>{
+    company=(s.exists&&s.data().name)||'My Company';const h=G('co');if(h&&document.activeElement!==h)h.value=company},onErr);
+  un('sh');subs.sh=DB.doc('settings/shift').onSnapshot(s=>{if(s.exists)shift={...shift,...s.data()};const a=G('s1'),b=G('s2');if(a&&document.activeElement!==a)a.value=shift.start;if(b&&document.activeElement!==b)b.value=shift.end;renderTbl()},onErr);
+  if(admin){
+    un('usr');subs.usr=DB.collection('users').onSnapshot(s=>{users=s.docs.map(d=>({id:d.id,...d.data()}));renderTbl()},onErr);
+    un('sal');subs.sal=DB.doc('payroll/salaries').onSnapshot(s=>{sal=s.exists?{...(s.data().s||{})}:{};renderTbl()},onErr);
+  }
+  subMonth();
+}
+function subMonth(){
+  un('att');subs.att=DB.collection('attendance/'+month+'/emps').onSnapshot(s=>{
+    att={};s.docs.forEach(d=>{const x=d.data();att[d.id]={days:{...(x.days||{})},by:{...(x.by||{})},tin:{...(x.tin||{})},tout:{...(x.tout||{})}}});renderTbl()},onErr);
+  if(admin){un('adj');subs.adj=DB.doc('payroll/'+month).onSnapshot(s=>{
+    adj=s.exists?JSON.parse(JSON.stringify(s.data().adj||{})):{};renderTbl()},onErr)}
+}
+
+/* ---------- time in / out ---------- */
+const mins=t=>{if(!t)return null;const q=t.split(':');return (+q[0])*60+(+q[1])};
+const hm=m=>m>0?Math.floor(m/60)+':'+String(m%60).padStart(2,'0'):'';
+function calc(i,o){
+  const a=mins(i),b=mins(o),sh=mins(shift.start),en=mins(shift.end);let w=0,late=0,ot=0;
+  if(a!==null)late=Math.max(0,a-sh);
+  if(a!==null&&b!==null){const end=b<a?b+1440:b;w=end-a;ot=Math.max(0,end-en)}
+  return{w,late,ot};
+}
+function tsHTML(list){
+  const d=+tday.slice(8);
+  return `<h3>Time in / out — ${esc(tday)}</h3><div class="scroll"><table><thead><tr><th>Employee</th><th>Time in</th><th>Time out</th><th>Hours</th><th>Late (min)</th><th>Overtime</th></tr></thead><tbody>`+
+  list.map(e=>{const r=att[e.id]||{},i=(r.tin||{})[d]||'',o=(r.tout||{})[d]||'',c=calc(i,o);
+    return `<tr><td><b>${esc(e.name)}</b></td>
+    <td><input type="time" style="width:auto" value="${i}" onchange="setTime('${e.id}','tin',this.value)"> <button class="ghost" style="color:var(--ink)" onclick="nowT('${e.id}','tin')">Now</button></td>
+    <td><input type="time" style="width:auto" value="${o}" onchange="setTime('${e.id}','tout',this.value)"> <button class="ghost" style="color:var(--ink)" onclick="nowT('${e.id}','tout')">Now</button></td>
+    <td>${hm(c.w)}</td><td>${c.late||''}</td><td>${hm(c.ot)}</td></tr>`}).join('')+
+  '</tbody></table></div><p class="mute pad">Entering a time in marks the day Present automatically. Late and overtime are measured against the shift ('+esc(shift.start)+' – '+esc(shift.end)+').</p>';
+}
+function setTDay(v){
+  if(!v)return;tday=v;
+  if(v.slice(0,7)!==month){month=v.slice(0,7);att={};adj={};const m=G('mo');if(m)m.value=month;subMonth()}
+  renderTbl();
+}
+function nowT(eid,k){const d=new Date();setTime(eid,k,String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'))}
+async function setTime(eid,k,v){
+  const mo=tday.slice(0,7),d=+tday.slice(8);
+  if(!admin&&mo!==curM()){toast('You can only edit the current month.');return}
+  const rec=att[eid]=att[eid]||{days:{},by:{}};rec[k]=rec[k]||{};rec[k][d]=v;rec.by[d]=me.id;
+  const body={[k]:{[d]:v},by:{[d]:me.id}};
+  if(k==='tin'&&v&&!rec.days[d]){rec.days[d]='P';body.days={[d]:'P'}}
+  renderTbl();
+  try{await upsert(DB.doc('attendance/'+mo+'/emps/'+eid),body)}
+  catch(e){toast(e&&e.code==='invalid_argument'?"Not saved — your Claude account can't change attendance (ask the owner for Contributor access).":'Not saved: '+((e&&(e.message||e.code))||'error'))}
+}
+function saveShift(){guard(()=>DB.doc('settings/shift').set({start:G('s1').value||'09:00',end:G('s2').value||'17:00'}))}
+
+/* ---------- attendance ---------- */
+function attHTML(){
+  const [y,m]=month.split('-').map(Number),dim=new Date(y,m,0).getDate(),list=emps.filter(e=>e.active!==false);
+  if(!list.length)return '<p class="mute pad">No employees yet.'+(admin?' Add them in the Employees tab.':' Ask an admin to add employees.')+'</p>';
+  let h='<div class="scroll"><table class="grid"><thead><tr><th class="sticky">Employee</th>';
+  for(let d=1;d<=dim;d++){const w=new Date(y,m-1,d).getDay();h+=`<th class="${w===0?'wk':''}">${d}<small>${'SMTWTFS'[w]}</small></th>`}
+  h+='<th>P</th><th>A</th><th>H</th><th>L</th></tr></thead><tbody>';
+  list.forEach(e=>{
+    const rec=att[e.id]||{days:{},by:{}},c={P:0,A:0,H:0,L:0,O:0};let cells='';
+    for(let d=1;d<=dim;d++){const v=rec.days[d]||'';if(v&&v in c)c[v]++;
+      cells+=`<td class="c ${v}" onclick="mark('${e.id}',${d})" title="${esc(rec.by[d]?'Marked by '+rec.by[d]:'')}">${v}</td>`}
+    h+=`<tr><td class="sticky"><b>${esc(e.name)}</b><small>${esc(e.code||'')}</small></td>${cells}<td>${c.P}</td><td>${c.A}</td><td>${c.H}</td><td>${c.L}</td></tr>`;
+  });
+  return h+'</tbody></table></div><p class="mute pad">Tap a day to cycle: P present · A absent · H half day · L leave · O off. Hover/long-press a cell to see who marked it.</p>'+tsHTML(list);
+}
+async function mark(eid,d){
+  if(!admin&&month!==curM()){toast('You can only mark the current month.');return}
+  const rec=att[eid]=att[eid]||{days:{},by:{}},cur=rec.days[d]||'',nx=ST[(ST.indexOf(cur)+1)%ST.length];
+  rec.days[d]=nx;rec.by[d]=me.id;renderTbl();
+  try{await upsert(DB.doc('attendance/'+month+'/emps/'+eid),{days:{[d]:nx},by:{[d]:me.id}})}
+  catch(e){rec.days[d]=cur;renderTbl();toast(e&&e.code==='invalid_argument'?"Not saved — your Claude account can't change attendance (ask the owner for Contributor access).":'Not saved: '+((e&&(e.message||e.code))||'error'))}
+}
+async function allP(){
+  const t=+today().slice(8);
+  for(const e of emps.filter(e=>e.active!==false)){if(!((att[e.id]||{days:{}}).days[t]))await mark(e.id,t)}
+}
+
+/* ---------- employees ---------- */
+function empHTML(){
+  if(!emps.length)return '<p class="mute pad">No employees yet.</p>';
+  return '<div class="scroll"><table><thead><tr><th>Code</th><th>Name</th><th>Designation</th><th>Monthly salary</th><th>Active</th></tr></thead><tbody>'+
+  emps.map(e=>`<tr><td><input value="${esc(e.code||'')}" onchange="updEmp('${e.id}','code',this.value)"></td>
+  <td><input value="${esc(e.name)}" onchange="updEmp('${e.id}','name',this.value)"></td>
+  <td><input value="${esc(e.desig||'')}" onchange="updEmp('${e.id}','desig',this.value)"></td>
+  <td><input type="number" value="${sal[e.id]||''}" onchange="setSal('${e.id}',this.value)"></td>
+  <td><input type="checkbox" ${e.active!==false?'checked':''} onchange="updEmp('${e.id}','active',this.checked)"></td></tr>`).join('')+'</tbody></table></div><p class="mute pad">Untick Active to hide someone from the sheet and payroll without losing their history.</p>';
+}
+function updEmp(id,k,v){guard(()=>DB.doc('employees/'+id).update({[k]:v}))}
+function setSal(id,v){guard(()=>upsert(DB.doc('payroll/salaries'),{s:{[id]:+v||0}}))}
+function addEmp(){guard(async()=>{
+  const name=G('en').value.trim();if(!name)throw Error('Enter a name');
+  const r=await DB.collection('employees').add({code:G('ec').value.trim(),name,desig:G('ed').value.trim(),active:true});
+  const s=+G('es').value||0;if(s)await upsert(DB.doc('payroll/salaries'),{s:{[r.id]:s}});
+  ['ec','en','ed','es'].forEach(i=>G(i).value='');toast('Employee added')})}
+
+/* ---------- payroll ---------- */
+function payRows(){
+  const [y,m]=month.split('-').map(Number),dim=new Date(y,m,0).getDate();
+  return emps.filter(e=>e.active!==false).map(e=>{
+    const dd=(att[e.id]||{days:{}}).days,c={P:0,A:0,H:0,L:0,O:0};
+    for(let d=1;d<=dim;d++){const v=dd[d];if(v&&v in c)c[v]++}
+    const s=+sal[e.id]||0,a=adj[e.id]||{},unm=dim-c.P-c.A-c.H-c.L-c.O,
+      ded=Math.round(s/dim*(c.A+c.H/2)*100)/100,al=+a.a||0,od=+a.d||0;
+    const rr=att[e.id]||{},tm={w:0,late:0,ot:0};
+    for(let d=1;d<=dim;d++){const x=calc((rr.tin||{})[d],(rr.tout||{})[d]);tm.w+=x.w;tm.late+=x.late;tm.ot+=x.ot}
+    return{e,c,s,unm,tm,ded,al,od,net:Math.round((s-ded+al-od)*100)/100};
+  });
+}
+function payHTML(){
+  const rs=payRows();if(!rs.length)return '<p class="mute pad">No employees yet.</p>';
+  const f=n=>n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  const T=rs.reduce((t,r)=>({s:t.s+r.s,d:t.d+r.ded,a:t.a+r.al,o:t.o+r.od,n:t.n+r.net}),{s:0,d:0,a:0,o:0,n:0});
+  return '<div class="scroll"><table><thead><tr><th>Employee</th><th class="n">Basic</th><th>P</th><th>A</th><th>H</th><th>L</th><th>Off</th><th>Unmarked</th><th>Hours</th><th>Late (min)</th><th>Overtime</th><th class="n">Absence deduction</th><th>Allowance</th><th>Other deduction</th><th class="n">Net pay</th></tr></thead><tbody>'+
+  rs.map(r=>`<tr><td><b>${esc(r.e.name)}</b><br><small class="mute">${esc(r.e.code||'')}</small></td><td class="n">${f(r.s)}</td><td>${r.c.P}</td><td>${r.c.A}</td><td>${r.c.H}</td><td>${r.c.L}</td><td>${r.c.O}</td><td>${r.unm}</td><td>${hm(r.tm.w)}</td><td>${r.tm.late||''}</td><td>${hm(r.tm.ot)}</td><td class="n">${f(r.ded)}</td>
+  <td><input type="number" value="${r.al||''}" onchange="setAdj('${r.e.id}','a',this.value)"></td>
+  <td><input type="number" value="${r.od||''}" onchange="setAdj('${r.e.id}','d',this.value)"></td><td class="n"><b>${f(r.net)}</b></td></tr>`).join('')+
+  `</tbody><tfoot><tr><td>Total</td><td class="n">${f(T.s)}</td><td colspan="9"></td><td class="n">${f(T.d)}</td><td class="n">${f(T.a)}</td><td class="n">${f(T.o)}</td><td class="n">${f(T.n)}</td></tr></tfoot></table></div>
+  <p class="mute pad">Absence deduction = salary ÷ days in month × (absent days + ½ × half days). Leave and off days are paid. "Unmarked" days are not deducted — check them before paying. Hours, late and overtime are for reference and do not change net pay.</p>`;
+}
+function setAdj(id,k,v){guard(()=>upsert(DB.doc('payroll/'+month),{adj:{[id]:{[k]:+v||0}}}))}
+async function csv(){
+  const q=s=>'"'+String(s).replace(/"/g,'""')+'"';
+  const rows=[['Code','Name','Basic','Present','Absent','Half day','Leave','Off','Unmarked','Hours','Late (min)','Overtime','Absence deduction','Allowance','Other deduction','Net pay'].map(q).join(',')];
+  payRows().forEach(r=>rows.push([r.e.code||'',r.e.name,r.s,r.c.P,r.c.A,r.c.H,r.c.L,r.c.O,r.unm,hm(r.tm.w),r.tm.late,hm(r.tm.ot),r.ded,r.al,r.od,r.net].map(q).join(',')));
+  if(!DL){toast('Downloads are not available here');return}
+  try{await DL.save({filename:'payroll-'+month+'.csv',data:rows.join('\n')});toast('Saved')}
+  catch(e){if(!e||e.code!=='declined')toast('Could not save: '+((e&&(e.message||e.code))||'error'))}
+}
+
+/* ---------- users ---------- */
+function usrHTML(){
+  if(!users.length)return '<p class="mute pad">No users.</p>';
+  return '<div class="scroll"><table><thead><tr><th>User ID</th><th>Name</th><th>Role</th><th>New password</th><th></th></tr></thead><tbody>'+
+  users.sort((a,b)=>a.id.localeCompare(b.id)).map(u=>`<tr><td><b>${esc(u.id)}</b></td><td>${esc(u.name)}</td>
+  <td><select onchange="setRole('${u.id}',this.value)"><option value="admin" ${u.role==='admin'?'selected':''}>Admin</option><option value="clerk" ${u.role!=='admin'?'selected':''}>Attendance only</option></select></td>
+  <td><input type="password" id="pw_${u.id}" placeholder="6+ characters"></td>
+  <td><button onclick="setPw('${u.id}')">Set</button> ${u.id===me.id?'':`<button class="ghost" style="color:var(--ink)" onclick="delUser('${u.id}')">Delete</button>`}</td></tr>`).join('')+'</tbody></table></div>';
+}
+function addUser(){guard(async()=>{
+  const id=G('ui').value.trim().toLowerCase();
+  if(users.some(u=>u.id===id))throw Error('That User ID already exists');
+  await mkUser(id,G('un').value,G('ur').value,G('up').value);
+  ['ui','un','up'].forEach(i=>G(i).value='');toast('User added')})}
+function setPw(id){guard(async()=>{
+  const pw=G('pw_'+id).value;if(pw.length<6)throw Error('Password must be at least 6 characters');
+  const salt=rnd();await DB.doc('users/'+id).update({salt,hash:await pbk(pw,salt)});G('pw_'+id).value='';toast('Password changed for '+id)})}
+function setRole(id,v){guard(async()=>{
+  const u=users.find(x=>x.id===id);
+  if(u.role==='admin'&&v!=='admin'&&users.filter(x=>x.role==='admin').length<2){renderTbl();throw Error('Keep at least one admin')}
+  await DB.doc('users/'+id).update({role:v});toast('Role updated')})}
+function delUser(id){guard(async()=>{
+  const u=users.find(x=>x.id===id);
+  if(u.role==='admin'&&users.filter(x=>x.role==='admin').length<2)throw Error('Keep at least one admin');
+  await DB.doc('users/'+id).delete();toast('Deleted '+id)})}
+
+/* ---------- boot ---------- */
+(async()=>{
+  const c=window.claude;
+  if(c&&c.use){DB=await c.use('db');DL=await c.use('downloads');U=await c.use('user')}
+  if(!DB){G('app').innerHTML='<div class="box"><h1>Payroll &amp; Attendance</h1><p class="mute">Sign in to Claude and open this page from the owner\'s link or your invitation to use it.</p></div>';return}
+  try{
+    const id=sessionStorage.getItem('pa_uid');
+    if(id){const s=await DB.doc('users/'+id).get();if(s.exists){me={id,name:s.data().name,role:s.data().role};start();return}}
+  }catch(e){}
+  drawLogin();
+})();
+</script></body></html>
